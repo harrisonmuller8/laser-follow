@@ -27,11 +27,10 @@ from irobot_create_msgs.msg import HazardDetection, HazardDetectionVector
 from geometry_msgs.msg import Twist, Vector3, Point
 from visualization_msgs.msg import Marker
 
+class LaserFollow(Node):
 
-class Wanderer(Node):
-
-    def __init__(self):
-        super().__init__('wanderer')
+    def __init__(self, walldist:float, wallSide:float):
+        super().__init__('LaserFollow')
         self.hazard_subscription = self.create_subscription(
             HazardDetectionVector,
             "/yoshi/hazard_detection",
@@ -59,20 +58,24 @@ class Wanderer(Node):
         self.prev_hazard = []
 
         self.min_range = 0.1
-        self.max_range = 2.0
+        self.max_range = 4.0 * walldist
         self.laser_angle_offset = np.pi
-        self.wall_offset = 0.25
+        self.wall_offset = walldist
+        self.wall_side = wallSide
+        self.wall_found = False
+        self.twist.linear.x = 0.05
+        self.get_logger().info('DONE INIT!')
 
     
     def pub_cmd_vel_callback(self):
         self.publisher_.publish(self.twist)
-        self.get_logger().info('Publishing: "%s"' % self.twist)
+        # self.get_logger().info('Publishing: "%s"' % self.twist)
     
     def do_once(self, func=None):
         self.do_once_timer.destroy()
-        self.get_logger().info('DOONCE FUNC!: "%s"' % func)
+        # self.get_logger().info('DOONCE FUNC!: "%s"' % func)
         if(func) : func()
-        self.get_logger().info('IS DOONCE TIMER DEAD!: "%s"' % self.do_once_timer)
+        # self.get_logger().info('IS DOONCE TIMER DEAD!: "%s"' % self.do_once_timer)
 
     def makePoint(self, x,y,z):
         p = Point()
@@ -83,34 +86,79 @@ class Wanderer(Node):
 
 
     def laser_callback(self, msg : LaserScan):
-        ranges = np.vstack((np.linspace(msg.angle_min, msg.angle_max, len(msg.ranges)), msg.ranges))
+        self.twist.angular.z = 0.0
+
+        angles = np.linspace(msg.angle_min, msg.angle_max, len(msg.ranges)) + self.laser_angle_offset
+        angles[angles > np.pi] -= 2 * np.pi
+        angles[angles < -np.pi] += 2 * np.pi
+        ranges = np.vstack((angles, msg.ranges))
         # self.get_logger().info('A: {}\t D: {}'.format(a,d) )
-        self.get_logger().info('RANGES_SHAPE {}'.format(ranges.shape) )
+        # self.get_logger().info('RANGES_SHAPE {}'.format(ranges.shape) )
 
-        filtered = ranges[:,(ranges[1] > self.min_range) & (ranges[1] < self.max_range)]
+        filtered_by_range = ranges[:,(ranges[1] > self.min_range) & (ranges[1] < self.max_range)]
         
-        xy = np.vstack((filtered[1] * np.cos(filtered[0] + self.laser_angle_offset),filtered[1] * np.sin(filtered[0] + self.laser_angle_offset)))
-        # self.get_logger().info('XY {}'.format(xy) )
+        front_range_angle = filtered_by_range[:,(filtered_by_range[0] > (- np.pi / 3.0)) & (filtered_by_range[0] < (np.pi / 3.0))]
 
-        marker = Marker()
+        if ((front_range_angle[1] < self.wall_offset).any()):
+            self.wall_found = True
+            self.twist.angular.z += self.wall_side
+        
+        side_range_angle = filtered_by_range[:,((-1 * self.wall_side * filtered_by_range[0]) > ( np.pi / 4.0)) & ((-1 * self.wall_side * filtered_by_range[0]) < (3.0 * np.pi / 4.0))]
+        # self.get_logger().info('WALLCOUNT {}'.format(side_range_angle.shape) )
+            
+        if(side_range_angle.shape[1] > 10):
+            avg_side_dist = np.average(side_range_angle[1,:])
+            self.get_logger().info('DELTA {}'.format(self.wall_offset - avg_side_dist) )
+            if(self.wall_found):
+                self.twist.angular.z += self.wall_side * (self.wall_offset - avg_side_dist)
+            
 
-        marker.points = [self.makePoint(r[0],r[1],0.0) for r in xy.T]
+        front_xy = np.vstack((front_range_angle[1] * np.cos(front_range_angle[0]),front_range_angle[1] * np.sin(front_range_angle[0])))
+        side_xy = np.vstack((side_range_angle[1] * np.cos(side_range_angle[0]),side_range_angle[1] * np.sin(side_range_angle[0])))
+        
+        # self.get_logger().info('XY {}'.format(xy.shape) )
 
-        marker.header.frame_id = "base_link"
+        
+
+        markerFront = Marker()
+
+        markerFront.points = [self.makePoint(r[0],r[1],0.0) for r in front_xy.T]
+
+        markerFront.header.frame_id = "base_link"
         # marker.header.stamp = self.get_clock().now()
-        marker.ns = "yoshi"
-        marker.id = 0
-        marker.type = Marker.POINTS
-        marker.action = Marker.ADD
-        marker.scale.x = 0.05
-        marker.scale.y = 0.05
-        marker.scale.z = 0.05
-        marker.color.a = 1.0 # Don't forget to set the alpha!
-        marker.color.r = 0.0
-        marker.color.g = 1.0
-        marker.color.b = 0.0
+        markerFront.ns = "yoshi"
+        markerFront.id = 0
+        markerFront.type = Marker.POINTS
+        markerFront.action = Marker.ADD
+        markerFront.scale.x = 0.05
+        markerFront.scale.y = 0.05
+        markerFront.scale.z = 0.05
+        markerFront.color.a = 1.0 # Don't forget to set the alpha!
+        markerFront.color.r = 0.0
+        markerFront.color.g = 1.0
+        markerFront.color.b = 0.0
 
-        self.marker_publisher_.publish( marker )
+        self.marker_publisher_.publish( markerFront )
+
+        markerSide = Marker()
+
+        markerSide.points = [self.makePoint(r[0],r[1],0.0) for r in side_xy.T]
+
+        markerSide.header.frame_id = "base_link"
+        # markerSide.header.stamp = self.get_clock().now()
+        markerSide.ns = "yoshi"
+        markerSide.id = 1
+        markerSide.type = Marker.POINTS
+        markerSide.action = Marker.ADD
+        markerSide.scale.x = 0.05
+        markerSide.scale.y = 0.05
+        markerSide.scale.z = 0.05
+        markerSide.color.a = 1.0 # Don't forget to set the alpha!
+        markerSide.color.r = 1.0
+        markerSide.color.g = 1.0
+        markerSide.color.b = 1.0
+
+        self.marker_publisher_.publish( markerSide )
 
 
     def hazard_callback(self, msg : HazardDetectionVector):
@@ -131,8 +179,8 @@ class Wanderer(Node):
                 hazardName, action = actions.get(hazard.type, None)
                 self.get_logger().info('hazardType!: "%s"' % hazardName)
                 self.get_logger().info('RUNNING ACTION!: "%s"' % action)
-                if (action):
-                    action()
+                # if (action):
+                #     action()
         self.prev_hazard = newHazardList
         
             
@@ -196,15 +244,28 @@ class Wanderer(Node):
 
 def main(args=None):
     rclpy.init(args=args)
+    wallDist = -1.0
+    wallSide = 0.0
 
-    wanderer = Wanderer()
+    while (wallDist <= 0 ):
+        wallDist = float(input ("ENTER THE WALL DISTANCE IN METERS > 0: "))
+    
+    while (wallSide == 0):
+        userInput = input("ENTER THE WALL SIDE<left|right>: ").lower()
+        if (userInput == 'left' or userInput == 'l'):
+            wallSide = -1.0
+        elif (userInput == 'right' or userInput == 'r'):
+            wallSide = 1.0
 
-    rclpy.spin(wanderer)
+    print(wallDist, wallSide)
+    laserfollower = LaserFollow(wallDist, wallSide)
+
+    rclpy.spin(laserfollower)
 
     # Destroy the node explicitly
     # (optional - otherwise it will be done automatically
     # when the garbage collector destroys the node object)
-    wanderer.destroy_node()
+    laserfollower.destroy_node()
     rclpy.shutdown()
 
 
