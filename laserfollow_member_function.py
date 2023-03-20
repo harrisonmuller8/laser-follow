@@ -139,11 +139,10 @@ class LaserFollow(Node):
             self.wall_found = True
             self.get_logger().info('TURN+= {}'.format(self.wall_side) )
             self.twist.angular.z += self.wall_side
-        elif(side_xy.shape[1] > 10):
+        elif(self.wall_found and side_xy.shape[1] > 10):
             avg_side_dist = np.average(side_range_angle[1,:])
-            if(self.wall_found):
-                self.get_logger().info('TURN+= {}'.format(3.0 * self.wall_side * (self.wall_offset - avg_side_dist)) )
-                self.twist.angular.z += 3.0 * self.wall_side * (self.wall_offset - avg_side_dist)
+            self.get_logger().info('TURN+= {}'.format(3.0 * self.wall_side * (self.wall_offset - avg_side_dist)) )
+            self.twist.angular.z += 3.0 * self.wall_side * (self.wall_offset - avg_side_dist)
         elif(self.wall_found):
             self.twist.angular.z -= self.wall_side
 
