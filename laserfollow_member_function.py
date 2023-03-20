@@ -58,7 +58,7 @@ class LaserFollow(Node):
         self.prev_hazard = []
 
         self.min_range = 0.1
-        self.max_range = 4.0 * walldist
+        self.max_range = 2.0 * walldist
         self.laser_angle_offset = np.pi
         self.wall_offset = walldist
         self.wall_side = wallSide
@@ -83,82 +83,110 @@ class LaserFollow(Node):
         p.y = y
         p.z = z
         return p
+    
+    def MyMakeArrowMarker(self, id:int):
+        marker = Marker()
+        marker.header.frame_id = "base_link"
+        # marker.header.stamp = self.get_clock().now()
+        marker.ns = "yoshi"
+        marker.id = id
+        marker.type = Marker.ARROW
+        marker.action = Marker.ADD
+        marker.color.a = 1.0 # Don't forget to set the alpha!
+        marker.scale.x = 0.05
+        marker.scale.y = 0.05
+        marker.scale.z = 0.05
+        return marker
+
+    def MyMakePointsMarker(self, id:int):
+        marker = Marker()
+        marker.header.frame_id = "base_link"
+        # marker.header.stamp = self.get_clock().now()
+        marker.ns = "yoshi"
+        marker.id = id
+        marker.type = Marker.POINTS
+        marker.action = Marker.ADD
+        marker.color.a = 1.0 # Don't forget to set the alpha!
+        marker.scale.x = 0.05
+        marker.scale.y = 0.05
+        marker.scale.z = 0.05
+        return marker
 
 
     def laser_callback(self, msg : LaserScan):
+        if self.do_once_timer : pass
+
         self.twist.angular.z = 0.0
 
         angles = np.linspace(msg.angle_min, msg.angle_max, len(msg.ranges)) + self.laser_angle_offset
         angles[angles > np.pi] -= 2 * np.pi
         angles[angles < -np.pi] += 2 * np.pi
         ranges = np.vstack((angles, msg.ranges))
-        # self.get_logger().info('A: {}\t D: {}'.format(a,d) )
-        # self.get_logger().info('RANGES_SHAPE {}'.format(ranges.shape) )
 
         filtered_by_range = ranges[:,(ranges[1] > self.min_range) & (ranges[1] < self.max_range)]
         
-        front_range_angle = filtered_by_range[:,(filtered_by_range[0] > (- np.pi / 3.0)) & (filtered_by_range[0] < (np.pi / 3.0))]
-
-        if ((front_range_angle[1] < self.wall_offset).any()):
-            self.wall_found = True
-            self.twist.angular.z += self.wall_side
+        front_range_angle = filtered_by_range[:,(filtered_by_range[0] > (- np.pi / 8.0)) & (filtered_by_range[0] < (np.pi / 8.0))]
+        side_range_angle = filtered_by_range[:,((-1 * self.wall_side * filtered_by_range[0]) > ( 0.0 )) & ((-1 * self.wall_side * filtered_by_range[0]) < (3.0 * np.pi / 4.0))]
         
-        side_range_angle = filtered_by_range[:,((-1 * self.wall_side * filtered_by_range[0]) > ( np.pi / 4.0)) & ((-1 * self.wall_side * filtered_by_range[0]) < (3.0 * np.pi / 4.0))]
-        # self.get_logger().info('WALLCOUNT {}'.format(side_range_angle.shape) )
-            
-        if(side_range_angle.shape[1] > 10):
-            avg_side_dist = np.average(side_range_angle[1,:])
-            self.get_logger().info('DELTA {}'.format(self.wall_offset - avg_side_dist) )
-            if(self.wall_found):
-                self.twist.angular.z += self.wall_side * (self.wall_offset - avg_side_dist)
-            
-
         front_xy = np.vstack((front_range_angle[1] * np.cos(front_range_angle[0]),front_range_angle[1] * np.sin(front_range_angle[0])))
         side_xy = np.vstack((side_range_angle[1] * np.cos(side_range_angle[0]),side_range_angle[1] * np.sin(side_range_angle[0])))
         
-        # self.get_logger().info('XY {}'.format(xy.shape) )
+        if(front_xy.shape[1] > 10):
+            self.get_logger().info('MIN FRONT: {}'.format(np.min(front_xy[0])) )
 
-        
 
-        markerFront = Marker()
+        if ((front_xy.shape[1] > 10) and (np.min(front_xy[0]) < self.wall_offset)):
+            self.wall_found = True
+            self.get_logger().info('TURN+= {}'.format(self.wall_side) )
+            self.twist.angular.z += self.wall_side
+        elif(side_xy.shape[1] > 10):
+            avg_side_dist = np.average(side_range_angle[1,:])
+            if(self.wall_found):
+                self.get_logger().info('TURN+= {}'.format(3.0 * self.wall_side * (self.wall_offset - avg_side_dist)) )
+                self.twist.angular.z += 3.0 * self.wall_side * (self.wall_offset - avg_side_dist)
+        elif(self.wall_found):
+            self.twist.angular.z -= self.wall_side
+
+
+        markerFront = self.MyMakePointsMarker(0)
 
         markerFront.points = [self.makePoint(r[0],r[1],0.0) for r in front_xy.T]
 
-        markerFront.header.frame_id = "base_link"
-        # marker.header.stamp = self.get_clock().now()
-        markerFront.ns = "yoshi"
-        markerFront.id = 0
-        markerFront.type = Marker.POINTS
-        markerFront.action = Marker.ADD
-        markerFront.scale.x = 0.05
-        markerFront.scale.y = 0.05
-        markerFront.scale.z = 0.05
-        markerFront.color.a = 1.0 # Don't forget to set the alpha!
         markerFront.color.r = 0.0
         markerFront.color.g = 1.0
         markerFront.color.b = 0.0
 
         self.marker_publisher_.publish( markerFront )
 
-        markerSide = Marker()
+        markerSide = self.MyMakePointsMarker(1)
 
         markerSide.points = [self.makePoint(r[0],r[1],0.0) for r in side_xy.T]
 
-        markerSide.header.frame_id = "base_link"
-        # markerSide.header.stamp = self.get_clock().now()
-        markerSide.ns = "yoshi"
-        markerSide.id = 1
-        markerSide.type = Marker.POINTS
-        markerSide.action = Marker.ADD
-        markerSide.scale.x = 0.05
-        markerSide.scale.y = 0.05
-        markerSide.scale.z = 0.05
-        markerSide.color.a = 1.0 # Don't forget to set the alpha!
         markerSide.color.r = 1.0
         markerSide.color.g = 1.0
         markerSide.color.b = 1.0
 
         self.marker_publisher_.publish( markerSide )
+
+        markerLinear = self.MyMakeArrowMarker(2)
+
+        markerLinear.points = [self.makePoint(0.0,0.0,1.0),self.makePoint(self.twist.linear.x,0.0,1.0)]
+
+        markerLinear.color.r = 1.0
+        markerLinear.color.g = 0.0
+        markerLinear.color.b = 0.0
+
+        self.marker_publisher_.publish( markerLinear )
+
+        markerAngular = self.MyMakeArrowMarker(3)
+
+        markerAngular.points = [self.makePoint(0.0,0.0,1.0),self.makePoint(0.0, self.twist.angular.z,1.0)]
+
+        markerAngular.color.r = 0.0
+        markerAngular.color.g = 1.0
+        markerAngular.color.b = 0.0
+
+        self.marker_publisher_.publish( markerAngular )
 
 
     def hazard_callback(self, msg : HazardDetectionVector):
@@ -179,8 +207,8 @@ class LaserFollow(Node):
                 hazardName, action = actions.get(hazard.type, None)
                 self.get_logger().info('hazardType!: "%s"' % hazardName)
                 self.get_logger().info('RUNNING ACTION!: "%s"' % action)
-                # if (action):
-                #     action()
+                if (action):
+                    action()
         self.prev_hazard = newHazardList
         
             
@@ -214,16 +242,6 @@ class LaserFollow(Node):
         self.twist.linear.y = 0.0
         self.twist.linear.z = 0.0
         self.publisher_.publish(self.twist)
-    
-    def turn(self):
-        self.get_logger().info('TURN!')
-        self.twist.angular.x = 0.0
-        self.twist.angular.y = 0.0
-        self.twist.angular.z = choice([-1.0, 1.0])
-        self.twist.linear.x = 0.0
-        self.twist.linear.y = 0.0
-        self.twist.linear.z = 0.0
-        self.publisher_.publish(self.twist)
 
     def handle_bump(self):
         self.stop()
@@ -234,10 +252,7 @@ class LaserFollow(Node):
     def handle_backup_limit(self):
         self.stop()
         if self.do_once_timer : self.do_once_timer.destroy()
-        delay = uniform(2.0943951, 4.1887902)
-        self.get_logger().info('WAIT! : %f' % delay)
-        self.do_once_timer = self.create_timer(delay, lambda : self.do_once(func = self.stop))
-        self.turn()
+        self.forward()
     
     
 
