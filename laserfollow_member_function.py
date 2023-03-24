@@ -33,19 +33,19 @@ class LaserFollow(Node):
         super().__init__('LaserFollow')
         self.hazard_subscription = self.create_subscription(
             HazardDetectionVector,
-            "/yoshi/hazard_detection",
+            "/blinky/hazard_detection",
             self.hazard_callback,
             qos.qos_profile_sensor_data
             )
         self.laser_subscription = self.create_subscription(
             LaserScan,
-            "/yoshi/scan",
+            "/blinky/scan",
             self.laser_callback,
             qos.qos_profile_sensor_data
             )
         self.hazard_subscription  # prevent unused variable warning
-        self.publisher_ = self.create_publisher(Twist, '/yoshi/cmd_vel', 10)
-        self.marker_publisher_ = self.create_publisher(Marker, '/yoshi/visualization_marker', 0)
+        self.publisher_ = self.create_publisher(Twist, '/blinky/cmd_vel', 10)
+        self.marker_publisher_ = self.create_publisher(Marker, '/blinky/visualization_marker', 0)
 
 
         timer_period = 0.25  # seconds
@@ -58,7 +58,7 @@ class LaserFollow(Node):
         self.prev_hazard = []
 
         self.min_range = 0.1
-        self.max_range = 2.0 * walldist
+        self.max_range = 3.0 * walldist
         self.laser_angle_offset = np.pi
         self.wall_offset = walldist
         self.wall_side = wallSide
@@ -88,7 +88,7 @@ class LaserFollow(Node):
         marker = Marker()
         marker.header.frame_id = "base_link"
         # marker.header.stamp = self.get_clock().now()
-        marker.ns = "yoshi"
+        marker.ns = "blinky"
         marker.id = id
         marker.type = Marker.ARROW
         marker.action = Marker.ADD
@@ -102,7 +102,7 @@ class LaserFollow(Node):
         marker = Marker()
         marker.header.frame_id = "base_link"
         # marker.header.stamp = self.get_clock().now()
-        marker.ns = "yoshi"
+        marker.ns = "blinky"
         marker.id = id
         marker.type = Marker.POINTS
         marker.action = Marker.ADD
@@ -123,39 +123,40 @@ class LaserFollow(Node):
         angles[angles < -np.pi] += 2 * np.pi
         ranges = np.vstack((angles, msg.ranges))
 
-        filtered_by_range = ranges[:,(ranges[1] > self.min_range) & (ranges[1] < self.max_range)]
+        filtered_by_range = ranges[:,(ranges[1] >= self.min_range) & (ranges[1] <= self.max_range)]
+
+        # front_range_angle = filtered_by_range[:,(filtered_by_range[0] > (- np.pi / 8.0)) & (filtered_by_range[0] < (np.pi / 8.0))]
+        side_range_angle = filtered_by_range[:,((-1 * self.wall_side * filtered_by_range[0]) >= ( - np.pi / 6.0 )) & ((-1 * self.wall_side * filtered_by_range[0]) <= (3.0 * np.pi / 4.0))]
         
-        front_range_angle = filtered_by_range[:,(filtered_by_range[0] > (- np.pi / 8.0)) & (filtered_by_range[0] < (np.pi / 8.0))]
-        side_range_angle = filtered_by_range[:,((-1 * self.wall_side * filtered_by_range[0]) > ( 0.0 )) & ((-1 * self.wall_side * filtered_by_range[0]) < (3.0 * np.pi / 4.0))]
-        
-        front_xy = np.vstack((front_range_angle[1] * np.cos(front_range_angle[0]),front_range_angle[1] * np.sin(front_range_angle[0])))
+        # front_xy = np.vstack((front_range_angle[1] * np.cos(front_range_angle[0]),front_range_angle[1] * np.sin(front_range_angle[0])))
         side_xy = np.vstack((side_range_angle[1] * np.cos(side_range_angle[0]),side_range_angle[1] * np.sin(side_range_angle[0])))
         
-        if(front_xy.shape[1] > 10):
-            self.get_logger().info('MIN FRONT: {}'.format(np.min(front_xy[0])) )
-
-
-        if ((front_xy.shape[1] > 10) and (np.min(front_xy[0]) < self.wall_offset)):
+        if ((side_range_angle.shape[1] >= 2) and (np.min(side_range_angle[1]) <= self.wall_offset)):
             self.wall_found = True
-            self.get_logger().info('TURN+= {}'.format(self.wall_side) )
-            self.twist.angular.z += self.wall_side
-        elif(self.wall_found and side_xy.shape[1] > 10):
-            avg_side_dist = np.average(side_range_angle[1,:])
-            self.get_logger().info('TURN+= {}'.format(3.0 * self.wall_side * (self.wall_offset - avg_side_dist)) )
-            self.twist.angular.z += 3.0 * self.wall_side * (self.wall_offset - avg_side_dist)
+            # self.get_logger().info('FOUND WALL')
+        if(self.wall_found and side_range_angle.shape[1] >= 2):
+            closest_point = side_range_angle[:,np.argmin(side_range_angle[1])]
+            angle_err = (0.5 + (closest_point[0] * self.wall_side / np.pi))
+            dist_err = (self.wall_offset - closest_point[1])
+
+            self.get_logger().info('MIN DIST {}'.format(closest_point))
+            self.get_logger().info('DIST, ANGLE ERR {}'.format((dist_err, angle_err)))
+            self.twist.angular.z = self.wall_side * (3.0 * dist_err + 3.5 * angle_err)
+            self.twist.linear.x = 0.15 * np.cos(angle_err * np.pi)
         elif(self.wall_found):
-            self.twist.angular.z -= self.wall_side
+            self.twist.angular.z = -1.0 * self.wall_side
+            self.twist.linear.x = 0.0
 
 
-        markerFront = self.MyMakePointsMarker(0)
+        # markerFront = self.MyMakePointsMarker(0)
 
-        markerFront.points = [self.makePoint(r[0],r[1],0.0) for r in front_xy.T]
+        # markerFront.points = [self.makePoint(r[0],r[1],0.0) for r in front_xy.T]
 
-        markerFront.color.r = 0.0
-        markerFront.color.g = 1.0
-        markerFront.color.b = 0.0
+        # markerFront.color.r = 0.0
+        # markerFront.color.g = 1.0
+        # markerFront.color.b = 0.0
 
-        self.marker_publisher_.publish( markerFront )
+        # self.marker_publisher_.publish( markerFront )
 
         markerSide = self.MyMakePointsMarker(1)
 
